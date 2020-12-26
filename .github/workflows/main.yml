@@ -23,7 +23,7 @@ jobs:
           wget https://github.com/leetal/ios-cmake/raw/master/ios.toolchain.cmake
           mkdir build
           cd build
-          cmake .. -G Xcode -DCMAKE_TOOLCHAIN_FILE=ios.toolchain.cmake -DNOX11=ON -DNOEGL=ON -DSTATICLIBZ=ON -DPLATFORM=OS
+          cmake .. -G Xcode -DCMAKE_TOOLCHAIN_FILE=ios.toolchain.cmake -DNOX11=ON -DNOEGL=ON -DSTATICLIB=OFF -DPLATFORM=OS
           cmake --build . --config Release --target GL
           
       - name: Upload lib
