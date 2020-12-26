@@ -25,12 +25,13 @@ jobs:
           cd build
           cmake .. -G Xcode -DCMAKE_TOOLCHAIN_FILE=ios.toolchain.cmake -DNOX11=ON -DNOEGL=ON -DSTATICLIB=ON -DPLATFORM=OS
           cmake --build . --config Release --target GL
-          mkdir libGL
-          cd libGL
-          ar -x ../libGL.a
-          cd ..
-          libtool -dynamic libGL/*.o -o libgl4es.dylib -framework CoreFoundation -lSystem -lOpenGLES
-          rm -rf libGL
+          libtool -dynamic -arch_only arm64 -D -syslibroot /Applications/Xcode_12.2.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS14.2.sdk -L/Users/runner/work/gl4es/gl4es/lib/Release -filelist /Users/runner/work/gl4es/gl4es/build/src/gl4es.build/Release-iphoneos/GL.build/Objects-normal/arm64/GL.LinkFileList -dependency_info /Users/runner/work/gl4es/gl4es/build/src/gl4es.build/Release-iphoneos/GL.build/Objects-normal/arm64/GL_libtool_dependency_info.dat -o /Users/runner/work/gl4es/gl4es/build/Release/libGL.dylib
+          # mkdir libGL
+          # cd libGL
+          # ar -x ../libGL.a
+          # cd ..
+          # libtool -dynamic libGL/*.o -o libgl4es.dylib -framework CoreFoundation -lSystem -lOpenGLES
+          # rm -rf libGL
 
       - name: Upload lib
         uses: actions/upload-artifact@v2
