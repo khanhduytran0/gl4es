@@ -23,12 +23,12 @@ jobs:
           wget https://github.com/leetal/ios-cmake/raw/master/ios.toolchain.cmake
           mkdir build
           cd build
-          cmake .. -G Xcode -DCMAKE_TOOLCHAIN_FILE=ios.toolchain.cmake -DNOX11=ON -DNOEGL=ON -DSTATICLIB=ON -DPLATFORM=OS
+          cmake .. -G Xcode -DCMAKE_TOOLCHAIN_FILE=ios.toolchain.cmake -DNOX11=ON -DNOEGL=ON -DSTATICLIBZ=ON -DPLATFORM=OS
           cmake --build . --config Release --target GL
           
       - name: Upload IPA
         uses: actions/upload-artifact@v2
         with:
           name: libGL
-          path: lib/Release/libGL.a
+          path: lib/Release
           
