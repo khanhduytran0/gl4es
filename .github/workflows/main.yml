@@ -30,7 +30,7 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_FLAGS="-no-integrated-as -arch arm64 -miphoneos-version-min=11.0" \
-            -DNOX11=ON -DNOEGL=ON -DSTATICLIB=OFF -DPLATFORM=OS
+            -DNOX11=ON -DNOEGL=ON -DSTATICLIB=OFF -DPLATFORM=OS -DCMAKE_C_COMPILER=NONE
 
           # cmake .. -G Xcode -DCMAKE_TOOLCHAIN_FILE=ios.toolchain.cmake -DNOX11=ON -DNOEGL=ON -DSTATICLIB=ON -DPLATFORM=OS
           cmake --build . --config Release --target GL
