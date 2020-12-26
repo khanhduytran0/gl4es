@@ -25,7 +25,13 @@ jobs:
           cd build
           cmake .. -G Xcode -DCMAKE_TOOLCHAIN_FILE=ios.toolchain.cmake -DNOX11=ON -DNOEGL=ON -DSTATICLIB=ON -DPLATFORM=OS
           cmake --build . --config Release --target GL
-          
+          mkdir libGL
+          cd libGL
+          ar -x ../libGL.a
+          cd ..
+          libtool -dynamic libGL/*.o -o libgl4es.dylib -framework CoreFoundation -lSystem -lOpenGLES
+          rm -rf libGL
+
       - name: Upload lib
         uses: actions/upload-artifact@v2
         with:
