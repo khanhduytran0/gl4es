@@ -366,7 +366,7 @@ void gl4es_glEnableClientStateIndexed(GLenum array, GLuint index) {
         errorShim(GL_INVALID_ENUM);
     }
 }
-#ifndef _HF_ARCH_DARWIN
+#ifndef __APPLE__
 void gl4es_glEnableClientStatei(GLenum array, GLuint index) __attribute__((alias("gl4es_glEnableClientStateIndexed")));
 #else
 # pragma weak gl4es_glEnableClientStatei = gl4es_glEnableClientStateIndexed
@@ -383,7 +383,7 @@ void gl4es_glDisableClientStateIndexed(GLenum array, GLuint index) {
         errorShim(GL_INVALID_ENUM);
     }
 }
-#ifndef _HF_ARCH_DARWIN
+#ifndef __APPLE__
 void gl4es_glDisableClientStatei(GLenum array, GLuint index) __attribute__((alias("gl4es_glDisableClientStateIndexed")));
 #else
 # pragma weak gl4es_glDisableClientStatei = gl4es_glDisableClientStateIndexed
