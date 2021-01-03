@@ -208,7 +208,6 @@ else()
     
     target_link_libraries(GL
         "-framework OpenGLES"
-	"-undefined dynamic_lookup"
     )
     
     if(CMAKE_SHARED_LIBRARY_SUFFIX MATCHES ".so")
