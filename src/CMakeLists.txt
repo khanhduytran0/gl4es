@@ -210,10 +210,6 @@ else()
         target_link_libraries(GL ${log-lib})
     endif()
     
-    target_link_libraries(pojavexec
-        "-framework OpenGLES"
-    )
-    
     target_link_libraries(GL
         "-framework OpenGLES"
     )
