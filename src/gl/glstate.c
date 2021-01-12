@@ -84,13 +84,14 @@ void* NewGLState(void* shared_glstate, int es2only) {
         glstate->glsl = copy_state->glsl;
         //glstate->gleshard = copy_state->gleshard; // Not shared (at least not the VA)
         glstate->buffers = copy_state->buffers;
-        glstate->queries = copy_state->queries;
         glstate->fpe_cache = copy_state->fpe_cache;
         glstate->fbo.renderbufferlist = copy_state->fbo.renderbufferlist;
         glstate->fbo.default_rb = copy_state->fbo.default_rb;
         glstate->fbo.framebufferlist = copy_state->fbo.framebufferlist;
         glstate->fbo.fbo_0 = copy_state->fbo.fbo_0;
         glstate->fbo.old = copy_state->fbo.old;
+        glstate->samplers.samplerlist = copy_state->samplers.samplerlist;
+        glstate->queries.querylist = copy_state->queries.querylist;
 
         glstate->defaultvbo = copy_state->defaultvbo;
     }
@@ -109,7 +110,7 @@ void* NewGLState(void* shared_glstate, int es2only) {
     // set specifics default
 	GLfloat white[] = {1.0f, 1.0f, 1.0f, 1.0f};
 	memcpy(glstate->color, white, sizeof(GLfloat)*4);
-	glstate->last_error = GL_NO_ERROR;
+	glstate->shim_error = GL_NO_ERROR;
     glstate->normal[2] = 1.0f; // default normal is 0/0/1
     glstate->matrix_mode = GL_MODELVIEW;
     
@@ -236,9 +237,7 @@ void* NewGLState(void* shared_glstate, int es2only) {
         tex->base_level = -1;
         tex->max_level = -1;
         tex->alpha = true;
-        tex->min_filter = (globals4es.automipmap==1)?GL_LINEAR_MIPMAP_LINEAR:GL_LINEAR;
-        tex->mag_filter = GL_LINEAR;
-        tex->wrap_s = tex->wrap_t = GL_REPEAT;
+        init_sampler(&tex->sampler);
         tex->fpe_format = FPE_TEX_RGBA;
         tex->format = GL_RGBA;
         tex->type = GL_UNSIGNED_BYTE;
@@ -328,8 +327,8 @@ void* NewGLState(void* shared_glstate, int es2only) {
         glstate->texenv[i].env.mode = GL_MODULATE;
         glstate->texenv[i].env.rgb_scale = 1.0f;
         glstate->texenv[i].env.alpha_scale = 1.0f;
-        glstate->texenv[i].env.src0_rgb = glstate->texenv[i].env.src0_alpha = GL_TEXTURE;
-        glstate->texenv[i].env.src1_rgb = glstate->texenv[i].env.src1_alpha = GL_PREVIOUS;
+        glstate->texenv[i].env.src0_rgb = glstate->texenv[i].env.src0_alpha = GL_TEXTURE0;
+        glstate->texenv[i].env.src1_rgb = glstate->texenv[i].env.src1_alpha = GL_TEXTURE;
         glstate->texenv[i].env.src2_rgb = glstate->texenv[i].env.src2_alpha = GL_CONSTANT;
         glstate->texenv[i].env.op0_rgb = glstate->texenv[i].env.op1_rgb = GL_SRC_COLOR;
         glstate->texenv[i].env.op2_rgb = glstate->texenv[i].env.op0_alpha = 
@@ -356,8 +355,10 @@ void* NewGLState(void* shared_glstate, int es2only) {
         // some default are not 0...
         for (int i=0; i<MAX_TEX; i++) {
             //TexEnv Combine that are not 0
-            glstate->fpe_state->texenv[i].texsrcrgb1 = FPE_SRC_PREVIOUS;
-            glstate->fpe_state->texenv[i].texsrcalpha1 = FPE_SRC_PREVIOUS;
+            glstate->fpe_state->texenv[i].texsrcrgb0 = FPE_SRC_TEXTURE0;
+            glstate->fpe_state->texenv[i].texsrcalpha0 = FPE_SRC_TEXTURE0;
+            glstate->fpe_state->texenv[i].texsrcrgb1 = FPE_SRC_TEXTURE;
+            glstate->fpe_state->texenv[i].texsrcalpha1 = FPE_SRC_TEXTURE;
             glstate->fpe_state->texenv[i].texsrcrgb2 = FPE_SRC_CONSTANT;
             glstate->fpe_state->texenv[i].texsrcalpha2 = FPE_SRC_CONSTANT;
             glstate->fpe_state->texenv[i].texoprgb0 = FPE_OP_SRCCOLOR;
@@ -422,6 +423,13 @@ void* NewGLState(void* shared_glstate, int es2only) {
     glstate->fbo.current_rb = glstate->fbo.default_rb;
     glstate->fbo.fbo_read = glstate->fbo.fbo_0;
     glstate->fbo.fbo_draw = glstate->fbo.fbo_0;
+    // Samplers & queries
+    if(!shared_glstate)
+    {
+        glstate->samplers.samplerlist = kh_init(samplerlist_t);
+        glstate->queries.querylist = kh_init(queries);
+    }
+    glstate->queries.start = get_clock();
     // Get the per/context hardware values
     glstate->readf = GL_RGBA;
     glstate->readt = GL_UNSIGNED_BYTE;
@@ -430,8 +438,8 @@ void* NewGLState(void* shared_glstate, int es2only) {
     {
     LOAD_GLES(glGetIntegerv);
 #endif
-    gles_glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_FORMAT_OES, &glstate->readf);
-    gles_glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE_OES, &glstate->readt);
+    gles_glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_FORMAT_OES, (GLint *) &glstate->readf);
+    gles_glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE_OES, (GLint *) &glstate->readt);
 #if defined(AMIGAOS4) || defined(__EMSCRIPTEN__)
     }
 #endif
@@ -475,12 +483,13 @@ void DeleteGLState(void* oldstate) {
     }
     free_hashmap(glvao_t, vaos, glvao, free);
     if(!state->shared_cnt) {
-        free_hashmap(glquery_t, queries, queries, free);
         free_hashmap(glbuffer_t, buffers, buff, free);
         free_hashmap(gltexture_t, texture.list, tex, free_texture);
         free_hashmap(renderlist_t, headlists, gllisthead, free_renderlist);
         free_hashmap(glrenderbuffer_t, fbo.renderbufferlist, renderbufferlist_t, free_renderbuffer);
         free_hashmap(glframebuffer_t, fbo.framebufferlist, framebufferlist_t, free_framebuffer);
+        free_hashmap(glsampler_t, samplers.samplerlist, samplerlist_t, free);
+        free_hashmap(glquery_t, queries.querylist, queries, free);
     }
     #undef free_hashmap
     // free texture zero as it's not in the list anymore

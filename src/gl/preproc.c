@@ -223,7 +223,7 @@ eTokenType NextToken(char **p, uToken *tok) {
                             (*p)++; nextc=**p;
                         }
                         while(nextc>='0' && nextc<='9') { nb=nb*10+nextc-'0'; (*p)++; nextc=**p;}
-                        fnb=powf(fnb, nb*expsign);
+                        fnb *= powf(10, nb*expsign); // exp10f is a GNU extension
                     }
                     if(nextc=='f') {
                         (*p)++; nextc=**p;
@@ -231,7 +231,7 @@ eTokenType NextToken(char **p, uToken *tok) {
                     fnb*=isneg;
                     tok->type = TK_FLOAT;
                     tok->real = fnb;
-                    sprintf(tok->str, "%f", fnb);
+                    sprintf(tok->str, "%#g", fnb);
                 } else {
                     tok->type = TK_INT;
                     tok->integer = nb;

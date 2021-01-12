@@ -504,7 +504,7 @@ static void clear_program(program_t *glprogram)
     if(glprogram->attribloc) {
         attribloc_t *m;
         khint_t k;
-        khint_t ret;
+        int ret;
         //attribloc->glname must not be freed
         kh_foreach(glprogram->attribloc, k, m,
             free(m->name); free(m);
@@ -746,15 +746,23 @@ void gl4es_glLinkProgram(GLuint program) {
     for (int i=0; i<glprogram->attach_size; i++) {
         accumShaderNeeds(glprogram->attach[i], &needs);
     }
-    // now check if vertex shader is missing
-    int has_vertex = glprogram->last_vert?1:0;
-    // and create one if needed!
-    if(!has_vertex) {
+    // create one vertex shader if needed!
+    if(!glprogram->last_vert) {
         glprogram->default_need = (shaderconv_need_t*)malloc(sizeof(shaderconv_need_t));
         memcpy(glprogram->default_need, &needs, sizeof(shaderconv_need_t));
         glprogram->default_vertex = 1;
         GLenum vtx = gl4es_glCreateShader(GL_VERTEX_SHADER);
         gl4es_glShaderSource(vtx, 1, fpe_VertexShader(&needs, NULL), NULL);
+        gl4es_glCompileShader(vtx);
+        gl4es_glAttachShader(glprogram->id, vtx);
+    }
+    // create one fragment shader if needed!
+    if(!glprogram->last_frag) {
+        glprogram->default_need = (shaderconv_need_t*)malloc(sizeof(shaderconv_need_t));
+        memcpy(glprogram->default_need, &needs, sizeof(shaderconv_need_t));
+        glprogram->default_fragment = 1;
+        GLenum vtx = gl4es_glCreateShader(GL_FRAGMENT_SHADER);
+        gl4es_glShaderSource(vtx, 1, fpe_FragmentShader(&needs, NULL), NULL);
         gl4es_glCompileShader(vtx);
         gl4es_glAttachShader(glprogram->id, vtx);
     }
@@ -789,15 +797,15 @@ void gl4es_glLinkProgram(GLuint program) {
         DBG(printf(" link status = %d\n", glprogram->linked);)
         if(glprogram->linked) {
             fill_program(glprogram);
+            noerrorShimNoPurge();
         } else {
             // should DBG the linker error?
             DBG(printf(" Link failled!\n");)
             glprogram->linked = 0;
-            errorGL();
+            errorShim(err);
             return;
         }
-        // all done
-        errorShim(err);
+        
     } else {
         noerrorShim();
     }
@@ -831,7 +839,7 @@ void gl4es_glValidateProgram(GLuint program) {
         LOAD_GLES2(glGetProgramiv);
         gles_glValidateProgram(glprogram->id);
         GLenum err = gles_glGetError();
-        gles_glGetProgramiv(glprogram->id, GL_VALIDATE_STATUS, &glprogram->valid_result);
+        gles_glGetProgramiv(glprogram->id, GL_VALIDATE_STATUS, (GLint *) &glprogram->valid_result);
         errorShim(err);
         // TODO: grab all Uniform and Attrib of the program
     } else {

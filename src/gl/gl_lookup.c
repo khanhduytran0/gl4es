@@ -10,6 +10,7 @@
 #include "texgen.h"
 #include "vertexattrib.h"
 #include "oldprogram.h"
+#include "samplers.h"
 
 #include "../glx/hardext.h"
 
@@ -59,6 +60,8 @@ void *gl4es_GetProcAddress(const char *name) {
     _ARB(glGetBufferParameteriv);
     _EX(glGetBufferSubData);
     _ARB(glGetBufferSubData);
+    _EX(glCopyBufferSubData);
+    _ARB(glCopyBufferSubData);
 
     _EX(glMapBufferRange);
     _EX(glFlushMappedBufferRange);
@@ -152,6 +155,9 @@ void *gl4es_GetProcAddress(const char *name) {
         _EXT(glClearNamedFramebufferuiv)
         _EXT(glClearNamedFramebufferfv)
         _EXT(glClearNamedFramebufferfi)
+
+        // draw_buffer_2 (partial)
+        _EXT(glColorMaskIndexed)
     }
     
     // GL_EXT_vertex_array
@@ -702,7 +708,10 @@ void *gl4es_GetProcAddress(const char *name) {
         _EX(glGetQueryiv);
         _EX(glGetQueryObjectiv);
         _EX(glGetQueryObjectuiv);
-        
+        _EX(glQueryCounter);
+        _EX(glGetQueryObjecti64v);
+        _EX(glGetQueryObjectui64v);
+
         _ARB(glGenQueries);
         _ARB(glIsQuery);
         _ARB(glDeleteQueries);
@@ -711,6 +720,7 @@ void *gl4es_GetProcAddress(const char *name) {
         _ARB(glGetQueryiv);
         _ARB(glGetQueryObjectiv);
         _ARB(glGetQueryObjectuiv);
+        _ARB(glQueryCounter);
     }
 
     // GL_ARB_multisample
@@ -1016,6 +1026,23 @@ void *gl4es_GetProcAddress(const char *name) {
         _EX(glProgramEnvParameters4fvEXT)
         _EX(glProgramLocalParameters4fvEXT)
     }
+
+    //Sampler
+    _EX(glGenSamplers);
+    _EX(glBindSampler);
+    _EX(glDeleteSamplers);
+    _EX(glIsSampler);
+    _EX(glSamplerParameterf);
+    _EX(glSamplerParameteri);
+    _EX(glSamplerParameterfv);
+    _EX(glSamplerParameteriv);
+    _EX(glSamplerParameterIiv);
+    _EX(glSamplerParameterIuiv);
+    _EX(glGetSamplerParameterfv);
+    _EX(glGetSamplerParameteriv);
+    _EX(glGetSamplerParameterIiv);
+    _EX(glGetSamplerParameterIuiv);
+
     DBG(printf("NULL\n");)
     if (!globals4es.silentstub) LOGD("GL4ES GetProcAddress: %s not found.\n", name);
     return NULL;

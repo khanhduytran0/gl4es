@@ -195,6 +195,7 @@ void gl4es_glShaderSource(GLuint shader, GLsizei count, const GLchar * const *st
     GO(mvpmatrix)   \
     GO(notexarray)  \
     GO(clean)       \
+    GO(clipvertex)  \
     GO2(texs)
 
 void accumShaderNeeds(GLuint shader, shaderconv_need_t *need) {

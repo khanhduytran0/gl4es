@@ -22,19 +22,11 @@ static int comments = 1;
 
 #define ShadAppend(S) shad = Append(shad, &shad_cap, S)
 
-#ifdef AMIGA
-//                           2D   Rectangle    3D   CubeMap  Stream
-const char* texvecsize[] = {"vec2", "vec2", "vec2", "vec3", "vec2"};
-const char* texxyzsize[] = {"st", "st",    "st",  "stp",   "st"};
-//                          2D              Rectangle      3D          CubeMap          Stream
-const char* texname[] = {"texture2D", "texture2D", "texture2D", "textureCube", "textureStreamIMG"};    // textureRectange and 3D are emulated with 2D
-#else
 //                           2D   Rectangle    3D   CubeMap  Stream
 const char* texvecsize[] = {"vec4", "vec2", "vec2", "vec3", "vec2"};
 const char* texxyzsize[] = {"stpq", "st",    "st",  "stp",   "st"};
 //                          2D              Rectangle      3D          CubeMap          Stream
 const char* texname[] = {"texture2DProj", "texture2D", "texture2D", "textureCube", "textureStreamIMG"};    // textureRectange and 3D are emulated with 2D
-#endif
 const char* texnoproj[] = {"texture2D", "texture2D", "texture2D", "textureCube", "textureStreamIMG"};    // textureRectange and 3D are emulated with 2D
 const char* texsampler[] = {"sampler2D", "sampler2D", "sampler2D", "samplerCube", "samplerStreamIMG"};
 int texnsize[] = {2, 2, 3, 3, 2};
@@ -445,6 +437,7 @@ const char* const* fpe_VertexShader(shaderconv_need_t* need, fpe_state_t *state)
                 sprintf(buff, "BackColor = %s;\n", bm_emission);
                 ShadAppend(buff);
             }
+            
             sprintf(buff, "Color += %s*gl_LightModel.ambient;\n", fm_ambient);
             ShadAppend(buff);
             if(twosided) {
@@ -611,6 +604,8 @@ const char* const* fpe_VertexShader(shaderconv_need_t* need, fpe_state_t *state)
         int t = state->texture[i].textype;
         if(need && (need->need_texs&(1<<i)) && t==0)
             t = 1;
+        if(need && !(need->need_texs&(1<<i)))
+            t = 0;
         int mat = state->texture[i].texmat;
         int adjust = state->texture[i].texadjust;
         int tg[4];
@@ -740,9 +735,10 @@ const char* const* fpe_VertexShader(shaderconv_need_t* need, fpe_state_t *state)
             strcat(buff, "normal = normalize(normal);\n");
 #else
 // Implementions may choose to normalize for rescale...
-        if(state->rescaling || state->normalize)
+        if(state->rescaling || state->normalize || globals4es.normalize)
             strcpy(buff, "vec3 normal = normalize(gl_NormalMatrix * gl_Normal);\n");
         else
+            //strcpy(buff, "vec3 normal = (vec4(gl_Normal, (gl_Vertex.w==0.0)?0.0:(-dot(gl_Normal, gl_Vertex.xyz)/gl_Vertex.w))*gl_ModelViewMatrixInverse).xyz;\n");
             strcpy(buff, "vec3 normal = gl_NormalMatrix * gl_Normal;\n");
 #endif
         shad = InplaceInsert(GetLine(shad, normal_line + headers), buff, shad, &shad_cap);
@@ -817,6 +813,10 @@ const char* const* fpe_VertexShader(shaderconv_need_t* need, fpe_state_t *state)
 }
 
 const char* const* fpe_FragmentShader(shaderconv_need_t* need, fpe_state_t *state) {
+    // state can be NULL, so provide a 0 default
+    fpe_state_t default_state = {0};
+    int is_default = !!need;
+    if(!state) state = &default_state;
     int headers = 0;
     int lighting = state->lighting;
     int twosided = state->twosided && lighting;
@@ -1426,9 +1426,12 @@ const char* const* fpe_CustomVertexShader(const char* initial, fpe_state_t* stat
         ShadAppend("\nvoid main() {\n");
         ShadAppend("_gl4es_main();");
         if(planes) {
+            int clipvertex = 0;
+            if(strstr(shad, "gl4es_ClipVertex"))
+                clipvertex = 1;
             for (int i=0; i<hardext.maxplanes; i++) {
                 if((planes>>i)&1) {
-                    sprintf(buff, "clippedvertex_%d = dot(gl_ModelViewMatrix * gl_Vertex, _gl4es_ClipPlane_%d);\n", i, i);
+                    sprintf(buff, "clippedvertex_%d = dot(%s, _gl4es_ClipPlane_%d);\n", i, clipvertex?"gl4es_ClipVertex":"gl_ModelViewMatrix * gl_Vertex", i);
                     ShadAppend(buff);
                 }
             }

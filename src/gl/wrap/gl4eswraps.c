@@ -92,10 +92,14 @@ void gl4es_glGetLightiv(GLenum light, GLenum pname, GLint * params) {
     else
 	    for (int i=0; i<n; i++) params[i]=fparams[i];
 }
-void gl4es_glGetTexLevelParameterfv(GLenum target, GLint level, GLenum pname, GLfloat *params) {
-	GLint iparams;
-	gl4es_glGetTexLevelParameteriv(target, level, pname, &iparams);
-	(*params)=iparams;
+void gl4es_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint *params) {
+	GLfloat fparams[4];
+	gl4es_glGetTexLevelParameterfv(target, level, pname, fparams);
+    if(pname==GL_TEXTURE_BORDER_COLOR) {
+        for(int i=0; i<4; ++i)
+            params[i] = fparams[i];
+    } else
+	    (*params)=fparams[0];
 	return;
 }
 void gl4es_glGetClipPlane(GLenum plane, GLdouble *equation) {
@@ -273,17 +277,17 @@ void glOrthofOES(GLfloat left, GLfloat right, GLfloat bottom,
 
 // glRect
 
-#define GL_RECT(suffix, type)                                 \
+#define GL_RECT(suffix, type)                                       \
     void gl4es_glRect##suffix(type x1, type y1, type x2, type y2) { \
-        gl4es_glBegin(GL_QUADS);                                  \
+        gl4es_glBegin(GL_QUADS);                                    \
         gl4es_glVertex2##suffix(x1, y1);                            \
         gl4es_glVertex2##suffix(x2, y1);                            \
         gl4es_glVertex2##suffix(x2, y2);                            \
         gl4es_glVertex2##suffix(x1, y2);                            \
-		gl4es_glEnd();											  \
-    }                                                         \
-    void gl4es_glRect##suffix##v(const type *v) {                   \
-        gl4es_glRect##suffix(v[0], v[1], v[2], v[3]);               \
+		gl4es_glEnd();											    \
+    }                                                               \
+    void gl4es_glRect##suffix##v(const type *v1, const type *v2) {  \
+        gl4es_glRect##suffix(v1[0], v1[1], v2[0], v2[1]);           \
     }
 
 GL_RECT(d, GLdouble)
@@ -789,7 +793,7 @@ void glMultMatrixd(const GLdouble *m) AliasExport("gl4es_glMultMatrixd");
 // rect
 #define GL_RECT(suffix, type)                                \
     void glRect##suffix(type x1, type y1, type x2, type y2) AliasExport("gl4es_glRect" #suffix); \
-    void glRect##suffix##v(const type *v)AliasExport("gl4es_glRect" #suffix "v");
+    void glRect##suffix##v(const type *v1, const type *v2)AliasExport("gl4es_glRect" #suffix "v");
 
 GL_RECT(d, GLdouble)
 GL_RECT(f, GLfloat)
@@ -811,7 +815,7 @@ void glMultiTexCoord2f(GLenum target, GLfloat s, GLfloat t) AliasExport("gl4es_g
 void glMultiTexCoord3f(GLenum target, GLfloat s, GLfloat t, GLfloat r) AliasExport("gl4es_glMultiTexCoord3f");
 void glMultiTexCoord3fv(GLenum target, GLfloat *t) AliasExport("gl4es_glMultiTexCoord3fv");
 //void glMultiTexCoord4fv(GLenum target, GLfloat *t) AliasExport("gl4es_glMultiTexCoord4fv");
-void glGetTexLevelParameterfv(GLenum target, GLint level, GLenum pname, GLfloat *params) AliasExport("gl4es_glGetTexLevelParameterfv");
+void glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLfloat *params) AliasExport("gl4es_glGetTexLevelParameteriv");
 void glTexGend(GLenum coord, GLenum pname, GLdouble param) AliasExport("gl4es_glTexGend");
 void glTexGenf(GLenum coord, GLenum pname, GLfloat param) AliasExport("gl4es_glTexGenf");
 void glTexGendv(GLenum coord, GLenum pname, const GLdouble *params) AliasExport("gl4es_glTexGendv");

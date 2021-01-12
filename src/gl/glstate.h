@@ -48,10 +48,9 @@ typedef struct glstate_s {
     GLfloat             *texcoord[MAX_TEX];
     GLfloat             *normal;
     GLfloat             *fogcoord;                  // last shortcut
-    int                 shim_error;
-    GLenum              last_error;
+    int                 type_error;
+    GLenum              shim_error;
     GLint               vp[4];
-    khash_t(queries)    *queries;       // shared
     glstack_t           *stack;
     glclientstack_t     *clientStack;
     raster_state_t      raster;
@@ -122,6 +121,12 @@ typedef struct glstate_s {
     int                 helper_texlen[MAX_TEX];
     GLfloat*            texgened[MAX_TEX];
     int                 texgenedsz[MAX_TEX];
+    // Sampler
+    samplers_t          samplers;
+    // Queries
+    queries_t           queries;
+    // Binded buffer (if used)
+    bind_buffers_t      bind_buffer;
 } glstate_t;
 
 

@@ -17,19 +17,26 @@
 #endif
 
 GLenum gl4es_glGetError() {
-    DBG(printf("glGetError(), noerror=%d, shim_error=%d\n", globals4es.noerror, glstate->shim_error);)
+    DBG(printf("glGetError(), noerror=%d, type_error=%d shim_error=%s\n", globals4es.noerror, glstate->type_error, PrintEnum(glstate->shim_error));)
     if(globals4es.noerror)
         return GL_NO_ERROR;
 	LOAD_GLES(glGetError);
-	if (glstate->shim_error) {
-        if(glstate->shim_error!=2)
-            gles_glGetError();  // purge error log
-        GLenum tmp = glstate->last_error;
-		glstate->last_error = GL_NO_ERROR;
-		return tmp;
+    GLenum err = GL_NO_ERROR;
+    if(!glstate->type_error) {
+        // check glGetError, forget everything else
+        err = gles_glGetError();
+        // If no error, then check "shim" error
+        if(err==GL_NO_ERROR)
+            err = glstate->shim_error;
+    } else {
+        err = glstate->shim_error;
 	}
-    noerrorShim();  // next will be ok
-	return gles_glGetError();
+    if(glstate->type_error==1)
+        gles_glGetError();  // purge error log
+    glstate->type_error = 2;
+    glstate->shim_error = GL_NO_ERROR;
+
+	return err;
 }
 GLenum glGetError() AliasExport("gl4es_glGetError");
 
@@ -75,7 +82,8 @@ void glGetPointerv(GLenum pname, GLvoid* *params) AliasExport("gl4es_glGetPointe
 void BuildExtensionsList() {
 	if(!glstate->extensions) {
 		glstate->extensions = (GLubyte*)malloc(5000);	// arbitrary size...
-		strcpy(glstate->extensions,
+        char *extensions = (char *) glstate->extensions;
+		strcpy(extensions,
 				"GL_EXT_abgr "
                 #ifdef AMIGAOS4
                 "GL_MGL_packed_pixels " // same as GL_EXT_packed_pixels, but older, some old Amiga games may check for this
@@ -126,67 +134,69 @@ void BuildExtensionsList() {
 //                "GL_EXT_blend_logic_op "
 				);
         if(!globals4es.notexrect)
-            strcat(glstate->extensions, "GL_ARB_texture_rectangle ");
+            strcat(extensions, "GL_ARB_texture_rectangle ");
         if(globals4es.vabgra)
-            strcat(glstate->extensions, "GL_ARB_vertex_array_bgra ");
+            strcat(extensions, "GL_ARB_vertex_array_bgra ");
 		if(globals4es.npot>=1)
-			strcat(glstate->extensions, "GL_APPLE_texture_2D_limited_npot ");
+			strcat(extensions, "GL_APPLE_texture_2D_limited_npot ");
 		if(globals4es.npot>=2)
-			strcat(glstate->extensions, "GL_ARB_texture_non_power_of_two ");
+			strcat(extensions, "GL_ARB_texture_non_power_of_two ");
         if(hardext.blendcolor)
-            strcat(glstate->extensions, "GL_EXT_blend_color ");
+            strcat(extensions, "GL_EXT_blend_color ");
         if(hardext.blendminmax)
-            strcat(glstate->extensions, "GL_EXT_blend_minmax ");
+            strcat(extensions, "GL_EXT_blend_minmax ");
         if(hardext.blendeq)
-            strcat(glstate->extensions, "GL_EXT_blend_equation_separate ");
+            strcat(extensions, "GL_EXT_blend_equation_separate ");
         if(hardext.blendfunc)
-            strcat(glstate->extensions, "GL_EXT_blend_func_separate ");
+            strcat(extensions, "GL_EXT_blend_func_separate ");
         if(hardext.blendsub)
-            strcat(glstate->extensions, "GL_EXT_blend_subtract ");
+            strcat(extensions, "GL_EXT_blend_subtract ");
         if(hardext.aniso)
-            strcat(glstate->extensions, "GL_EXT_texture_filter_anisotropic ");
+            strcat(extensions, "GL_EXT_texture_filter_anisotropic ");
         if(hardext.mirrored)
-            strcat(glstate->extensions, "GL_ARB_texture_mirrored_repeat ");
+            strcat(extensions, "GL_ARB_texture_mirrored_repeat ");
         if(hardext.fbo)
-            strcat(glstate->extensions,                 
+            strcat(extensions,                 
                 "GL_ARB_framebuffer_object "
                 "GL_EXT_framebuffer_object "
                 "GL_EXT_packed_depth_stencil "
                 "GL_EXT_framebuffer_blit "
-                "GL_ARB_draw_buffers ");
+                "GL_ARB_draw_buffers "
+                "GL_EXT_draw_buffers2 "
+                );
         if(hardext.pointsprite)
-            strcat(glstate->extensions, "GL_ARB_point_sprite ");
+            strcat(extensions, "GL_ARB_point_sprite ");
         if(hardext.cubemap) {
-            strcat(glstate->extensions, "GL_ARB_texture_cube_map ");
-            strcat(glstate->extensions, "GL_EXT_texture_cube_map ");
+            strcat(extensions, "GL_ARB_texture_cube_map ");
+            strcat(extensions, "GL_EXT_texture_cube_map ");
         }
         if(hardext.rgtex) {
-            strcat(glstate->extensions, "GL_EXT_texture_rg ");
-            strcat(glstate->extensions, "GL_ARB_texture_rg ");
+            strcat(extensions, "GL_EXT_texture_rg ");
+            strcat(extensions, "GL_ARB_texture_rg ");
         }
         if(hardext.floattex || (globals4es.floattex==2)) {
-            strcat(glstate->extensions, "GL_EXT_texture_float ");
-            strcat(glstate->extensions, "GL_ARB_texture_float ");
+            strcat(extensions, "GL_EXT_texture_float ");
+            strcat(extensions, "GL_ARB_texture_float ");
         }
         if(hardext.halffloattex || (globals4es.floattex==2)) {
-            strcat(glstate->extensions, "GL_EXT_texture_half_float ");
+            strcat(extensions, "GL_EXT_texture_half_float ");
         }
         if(hardext.floatfbo || (globals4es.floattex==2)) {
-            strcat(glstate->extensions, "GL_EXT_color_buffer_float ");
+            strcat(extensions, "GL_EXT_color_buffer_float ");
         }
         if(hardext.halffloatfbo || (globals4es.floattex==2)) {
-            strcat(glstate->extensions, "GL_EXT_color_buffer_half_float ");
+            strcat(extensions, "GL_EXT_color_buffer_half_float ");
         }
         if(hardext.depthtex) {
-            strcat(glstate->extensions, "GL_EXT_depth_texture ");
-            strcat(glstate->extensions, "GL_ARB_depth_texture ");
+            strcat(extensions, "GL_EXT_depth_texture ");
+            strcat(extensions, "GL_ARB_depth_texture ");
         }
         if(hardext.esversion>1) {
-            strcat(glstate->extensions, "GL_EXT_fog_coord ");
-            strcat(glstate->extensions, "GL_EXT_separate_specular_color ");
-            strcat(glstate->extensions, "GL_EXT_rescale_normal ");
-            strcat(glstate->extensions, "GL_ARB_ES2_compatibility ");
-            strcat(glstate->extensions,
+            strcat(extensions, "GL_EXT_fog_coord ");
+            strcat(extensions, "GL_EXT_separate_specular_color ");
+            strcat(extensions, "GL_EXT_rescale_normal ");
+            strcat(extensions, "GL_ARB_ES2_compatibility ");
+            strcat(extensions,
                 "GL_ARB_fragment_shader "
                 "GL_ARB_vertex_shader "
                 "GL_ARB_shader_objects "
@@ -198,30 +208,31 @@ void BuildExtensionsList() {
                 "GL_ARB_draw_instanced "
                 "GL_ARB_instanced_arrays "
                 );
-            strcat(glstate->extensions,
+            if(!globals4es.noarbprogram)
+                strcat(extensions,
                 "GL_ARB_vertex_program "
                 "GL_ARB_fragment_program "
                 "GL_EXT_program_parameters "
                 );
         }
         if(hardext.prgbin_n) {
-            strcat(glstate->extensions,
+            strcat(extensions,
             "GL_ARB_get_program_binary "
             );
         }
-        char* p = glstate->extensions;
+        char *p = extensions;
         glstate->num_extensions = 0;
         // quickly count extensions. Each one is separated by space...
         while ((p=strchr(p, ' '))) { while(*(p)==' ') ++p; glstate->num_extensions++; }
         // and now split in array of individual extensions
         // TODO: is all this better be moved in glstate?
         glstate->extensions_list = (GLubyte**)calloc(glstate->num_extensions, sizeof(GLubyte*));
-        p = glstate->extensions;
+        p = extensions;
         for (int i=0; i<glstate->num_extensions; i++) {
             char* p2 = strchr(p, ' ');
             int sz = p2 - p;
             glstate->extensions_list[i] = (GLubyte*)calloc(sz+1, sizeof(GLubyte));
-            strncpy(glstate->extensions_list[i], p, sz);
+            strncpy((char *) glstate->extensions_list[i], p, sz);
             while(*p2==' ') ++p2;
             p = p2;
         }
@@ -463,8 +474,10 @@ int gl4es_commonGet(GLenum pname, GLfloat *params) {
         case GL_MAX_TEXTURE_MAX_ANISOTROPY:
             if(hardext.aniso)
                 *params=hardext.aniso;
-            else
+            else {
+                *params=0;  // still send 0...
                 errorShim(GL_INVALID_ENUM);
+            }
             break;
         case GL_MAX_COLOR_ATTACHMENTS:
             if(hardext.fbo)
@@ -712,6 +725,12 @@ int gl4es_commonGet(GLenum pname, GLfloat *params) {
             break;
         case GL_PROGRAM_ERROR_POSITION_ARB:
             *params = glstate->glsl->error_ptr;
+            break;
+        case GL_SAMPLER_BINDING:
+            if(glstate->samplers.sampler[glstate->texture.active])
+                *params = glstate->samplers.sampler[glstate->texture.active]->glname;
+            else
+                *params = 0;
             break;
         // GL4ES special hints
         case GL_SHRINK_HINT_GL4ES:

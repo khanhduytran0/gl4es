@@ -13,7 +13,7 @@
 char* gl4es_convertARB(const char* const code, int vertex, char **error_msg, int *error_ptr) {
 	*error_ptr = -1; // Reinit error pointer
 	
-	int hasFogFragCoord = 0;
+	struct sSpecialCases specialCases = {0, 0};
 	const char *codeStart = code;
 	// Not sure this is really OK...
 	if ((codeStart[0] != '!') || (codeStart[1] != '!')) {
@@ -60,7 +60,7 @@ char* gl4es_convertARB(const char* const code, int vertex, char **error_msg, int
 	sCurStatus curStatus = {0};
 	initStatus(&curStatus, codeStart);
 	readNextToken(&curStatus);
-	if (curStatus.curToken != TOK_NEWLINE) {
+	if ((curStatus.curToken != TOK_NEWLINE) && (curStatus.curToken != TOK_WHITESPACE)) {
 		curStatus.status = ST_ERROR;
 	} else {
 		readNextToken(&curStatus);
@@ -101,7 +101,7 @@ char* gl4es_convertARB(const char* const code, int vertex, char **error_msg, int
 			fflush(stdout);
 		)
 		
-		parseToken(&curStatus, vertex, error_msg, &hasFogFragCoord);
+		parseToken(&curStatus, vertex, error_msg, &specialCases);
 		
 		readNextToken(&curStatus);
 	}
@@ -175,12 +175,15 @@ char* gl4es_convertARB(const char* const code, int vertex, char **error_msg, int
 		if (vertex) {
 			// Add a structure (for addresses) with only an 'x' component
 			APPEND_OUTPUT("#version 120\n\nstruct _structOnlyX { int x; };\n\nvoid main() {\n", 61)
-			if (hasFogFragCoord) {
+			if (specialCases.hasFogFragCoord) {
 				APPEND_OUTPUT("\tvec4 gl4es_FogFragCoordTemp = vec4(gl_FogFragCoord);\n", 54)
 			}
 		} else {
 			// No address
 			APPEND_OUTPUT("#version 120\n\nvoid main() {\n", 28)
+			if (specialCases.isDepthReplacing) {
+				APPEND_OUTPUT("\tvec4 gl4es_FragDepthTemp = vec4(gl_FragDepth);\n", 48)
+			}
 		}
 		
 		for (; (varIdx < curStatus.variables.size) && (curStatus.status != ST_ERROR); ++varIdx) {
@@ -247,8 +250,11 @@ char* gl4es_convertARB(const char* const code, int vertex, char **error_msg, int
 			break;
 		}
 		
-		if (hasFogFragCoord) {
+		if (specialCases.hasFogFragCoord) {
 			APPEND_OUTPUT("\tgl_FogFragCoord = gl4es_FogFragCoordTemp.x;\n", 45)
+		}
+		if (specialCases.isDepthReplacing) {
+			APPEND_OUTPUT("\tgl_FragDepth = gl4es_FragDepthTemp.z;\n", 39)
 		}
 		switch (curStatus.fogType) {
 		case FOG_NONE:
@@ -276,7 +282,7 @@ char* gl4es_convertARB(const char* const code, int vertex, char **error_msg, int
 			break;
 		}
 		if(curStatus.position_invariant) {
-			APPEND_OUTPUT2("\tgl_Position = ftransform();\n;")
+			APPEND_OUTPUT("\tgl_Position = ftransform();\n", 29)
 		}
 		APPEND_OUTPUT("}\n", 2)
 	} while (0);

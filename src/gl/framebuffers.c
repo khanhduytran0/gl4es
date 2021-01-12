@@ -1,8 +1,5 @@
 #include "framebuffers.h"
 
-#if !defined(ANDROID) && !defined(AMIGAOS4) && !defined(__EMSCRIPTEN__) && !defined(__APPLE__)
-#include <execinfo.h>
-#endif
 #include "../glx/hardext.h"
 #include "blit.h"
 #include "debug.h"
@@ -209,7 +206,7 @@ GLenum gl4es_glCheckFramebufferStatus(GLenum target) {
             return GL_FRAMEBUFFER_COMPLETE; // cheating here
         if(target==GL_DRAW_FRAMEBUFFER)
             rtarget = GL_FRAMEBUFFER;
-        result = gles_glCheckFramebufferStatus(target);
+        result = gles_glCheckFramebufferStatus(rtarget);
      }
     DBG(printf("glCheckFramebufferStatus(0x%04X)=0x%04X\n", target, result);)
     return result;
@@ -567,24 +564,24 @@ void gl4es_glFramebufferTexture2D(GLenum target, GLenum attachment, GLenum texta
         gltexture_t *bound = glstate->texture.bound[0/*glstate->texture.active*/][ENABLED_TEX2D];
         GLuint oldtex = bound->glname;
         int changed = 0;
-        if((hardext.npot==1 || hardext.npot==2) && (!tex->wrap_s || !tex->wrap_t || !wrap_npot(tex->wrap_s) || !wrap_npot(tex->wrap_t))) {
+        if((hardext.npot==1 || hardext.npot==2) && (!tex->actual.wrap_s || !tex->actual.wrap_t || !wrap_npot(tex->actual.wrap_s) || !wrap_npot(tex->actual.wrap_t))) {
             changed = 1;
             if(oldactive) gles_glActiveTexture(GL_TEXTURE0);
             if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, tex->glname);
             gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            tex->wrap_s = tex->wrap_t = GL_CLAMP_TO_EDGE;
+            tex->sampler.wrap_s = tex->actual.wrap_s = tex->sampler.wrap_t = tex->actual.wrap_t= GL_CLAMP_TO_EDGE;
             tex->adjust = 0;
         }
         //npot==2 and 3 should support that, but let's ignore that for now and force no mipmap for texture attached to fbo...
-        if(!tex->min_filter || !minmag_npot(tex->min_filter)) {
+        if(!tex->actual.min_filter || !minmag_npot(tex->actual.min_filter)) {
             if(!changed) {
                 if(oldactive) gles_glActiveTexture(GL_TEXTURE0);
                 if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, tex->glname);
                 changed = 1;
             }
-            tex->min_filter = minmag_forcenpot(tex->min_filter);
-            gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, tex->min_filter);
+            tex->sampler.min_filter = tex->actual.min_filter = minmag_forcenpot(tex->sampler.min_filter);
+            gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, tex->actual.min_filter);
             tex->adjust = 0;
             tex->mipmap_need = 0;
             tex->mipmap_auto = 0;
@@ -953,6 +950,8 @@ void gl4es_glDeleteRenderbuffers(GLsizei n, GLuint *renderbuffers) {
                     k = kh_get(renderbufferlist_t, glstate->fbo.renderbufferlist, t);
                     if (k != kh_end(glstate->fbo.renderbufferlist)) {
                         rend = kh_value(glstate->fbo.renderbufferlist, k);
+                        if(glstate->fbo.current_rb == rend)
+                            glstate->fbo.current_rb = glstate->fbo.default_rb;
                         if(rend->secondarybuffer)
                             gles_glDeleteRenderbuffers(1, &rend->secondarybuffer);
                         if(rend->secondarytexture)
@@ -1005,6 +1004,12 @@ void gl4es_glRenderbufferStorage(GLenum target, GLenum internalformat, GLsizei w
     else if (internalformat == GL_RGB8 && hardext.rgba8==0)
         internalformat = GL_RGB565_OES;
     else if (internalformat == GL_RGBA8 && hardext.rgba8==0)
+        internalformat = GL_RGBA4_OES;
+    else if (internalformat == GL_RGB5)
+        internalformat = GL_RGB565_OES;
+    else if (internalformat == GL_R3_G3_B2)
+        internalformat = GL_RGB565_OES;
+    else if (internalformat == GL_RGB4)
         internalformat = GL_RGBA4_OES;
     else if (internalformat == GL_RGBA) {
         if(hardext.rgba8==0)
@@ -1101,8 +1106,8 @@ void gl4es_glGenerateMipmap(GLenum target) {
     if(globals4es.automipmap != 3) {
         gles_glGenerateMipmap(rtarget);
         bound->mipmap_auto = 1;
-        if(bound->wanted_min != bound->min_filter)  // mainly for S3TC textures...
-            gl4es_glTexParameteri(target, GL_TEXTURE_MIN_FILTER, bound->wanted_min);
+        /*if(bound->sampler.min_filer != bound->actual.min_filter)  // mainly for S3TC textures...
+            gl4es_glTexParameteri(target, GL_TEXTURE_MIN_FILTER, bound->sampler.min_filer);*/
     }
 }
 
@@ -1386,6 +1391,9 @@ void gl4es_glFramebufferTextureLayer(	GLenum target, GLenum attachment, GLuint t
     gl4es_glFramebufferTexture2D(target, attachment, GL_TEXTURE_2D, texture,	level); // Force Texture2D, ignore layer (should track?)...
 }
 
+#ifndef NOX11
+void gl4es_SwapBuffers_currentContext();    // defined in glx/glx.c
+#endif
 void gl4es_glBlitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter) {
     // mask will be ignored
     // filter will be taken only for ReadFBO has no Texture attached (so readpixel is used)
@@ -1407,11 +1415,12 @@ void gl4es_glBlitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1,
 
     int created = (texture==0 || (glstate->fbo.fbo_read==glstate->fbo.fbo_draw));
     int oldtex = glstate->texture.active;
+    DBG(printf("   blit: created=%d, texture=%u, oldtex=%d\n", created, texture, oldtex);)
     if (oldtex)
         gl4es_glActiveTexture(GL_TEXTURE0);
     float nwidth, nheight;
     if (created) {
-        gltexture_t *old = glstate->texture.bound[ENABLED_TEX2D][glstate->texture.active];
+        gltexture_t *old = glstate->texture.bound[ENABLED_TEX2D][0];
         gl4es_glGenTextures(1, &texture);
         gl4es_glBindTexture(GL_TEXTURE_2D, texture);
         gl4es_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1445,12 +1454,18 @@ void gl4es_glBlitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1,
     float zoomy = ((float)(dstY1-dstY0))/srcH;
     // get the width / height of write FBO
     int fbowidth, fboheight;
+    int blitfullscreen = 0;
     if(glstate->fbo.fbo_draw->id==0/* && glstate->fbo.mainfbo_fbo*/) {
         fbowidth = glstate->fbo.mainfbo_width;
         fboheight = glstate->fbo.mainfbo_height;
-        if(glstate->fbo.mainfbo_width!=dstX1 || glstate->fbo.mainfbo_height!=dstY1) {
-            if (gl4es_getMainFBSize)
+        if((glstate->fbo.mainfbo_width==abs(dstX1-dstX0)) && (glstate->fbo.mainfbo_height==abs(dstY1-dstY0))) {
+            blitfullscreen = 1;
+        } else {
+            if (gl4es_getMainFBSize) {
                 gl4es_getMainFBSize(&glstate->fbo.mainfbo_width, &glstate->fbo.mainfbo_height);
+                if((glstate->fbo.mainfbo_width==abs(dstX1-dstX0)) && (glstate->fbo.mainfbo_height==abs(dstY1-dstY0)))
+                    blitfullscreen = 1;
+            }
         }
     } else {
         fbowidth  = glstate->fbo.fbo_draw->width;
@@ -1467,6 +1482,10 @@ void gl4es_glBlitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1,
     if(oldtex)
         gl4es_glActiveTexture(GL_TEXTURE0+oldtex);
 
+#ifndef NOX11
+    if(blitfullscreen)  // hack, force a swapbuffer (help wine d3d show stuff on certain games)
+        gl4es_SwapBuffers_currentContext();
+#endif
 }
 
 GLuint gl4es_getCurrentFBO() {
@@ -1531,7 +1550,7 @@ void gl4es_glClearBufferiv(GLenum buffer, GLint drawbuffer, const GLint * value)
                 LOAD_GLES_EXT(glDrawBuffers);
                 // select the buffer...
                 if(hardext.drawbuffers)
-                    gles_glDrawBuffers(1, &drawbuffer);
+                    gles_glDrawBuffers(1, (const GLenum *) &drawbuffer);
                 gl4es_glGetFloatv(GL_COLOR_CLEAR_VALUE, oldclear);
                 // how to convert the value? Most FB will be 8bits / componant for now...
                 gl4es_glClearColor(value[0]/127.0f, value[1]/127.0f, value[2]/127.0f, value[3]/127.0f);
@@ -1576,7 +1595,7 @@ void gl4es_glClearBufferuiv(GLenum buffer, GLint drawbuffer, const GLuint * valu
                 LOAD_GLES_EXT(glDrawBuffers);
                 // select the buffer...
                 if(hardext.drawbuffers)
-                    gles_glDrawBuffers(1, &drawbuffer);
+                    gles_glDrawBuffers(1, (const GLenum *) &drawbuffer);
                 gl4es_glGetFloatv(GL_COLOR_CLEAR_VALUE, oldclear);
                 // how to convert the value? Most FB will be 8bits / componant for now...
                 gl4es_glClearColor(value[0]/255.0f, value[1]/255.0f, value[2]/255.0f, value[3]/255.0f);
@@ -1609,7 +1628,7 @@ void gl4es_glClearBufferfv(GLenum buffer, GLint drawbuffer, const GLfloat * valu
                 LOAD_GLES_EXT(glDrawBuffers);
                 // select the buffer...
                 if(hardext.drawbuffers)
-                    gles_glDrawBuffers(1, &drawbuffer);
+                    gles_glDrawBuffers(1, (const GLenum *) &drawbuffer);
                 gl4es_glGetFloatv(GL_COLOR_CLEAR_VALUE, oldclear);
                 // how to convert the value? Most FB will be 8bits / componant for now...
                 gl4es_glClearColor(value[0], value[1], value[2], value[3]);
@@ -1679,6 +1698,14 @@ void gl4es_glClearNamedFramebufferfi(GLuint framebuffer, GLenum buffer, GLint dr
     GLenum target = (glstate->fbo.fbo_draw==glstate->fbo.fbo_read)?GL_FRAMEBUFFER:GL_DRAW_FRAMEBUFFER;
     gl4es_glBindFramebuffer(target, framebuffer);
     gl4es_glClearBufferfi(buffer, drawbuffer, depth, stencil);
+    gl4es_glBindFramebuffer(target, oldf);
+}
+
+void gl4es_glColorMaskIndexed(GLuint framebuffer, GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha) {
+    GLuint oldf = glstate->fbo.fbo_draw->id;
+    GLenum target = (glstate->fbo.fbo_draw==glstate->fbo.fbo_read)?GL_FRAMEBUFFER:GL_DRAW_FRAMEBUFFER;
+    gl4es_glBindFramebuffer(target, framebuffer);
+    gl4es_glColorMask(red, green, blue, alpha);
     gl4es_glBindFramebuffer(target, oldf);
 }
 

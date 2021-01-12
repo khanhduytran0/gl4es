@@ -7,12 +7,18 @@
 #include "../config.h"
 
 // ARBCONV_DBG_RE - resolve* error ArbConverter debug logs
+#ifdef DEBUG
 #define ARBCONV_DBG_RE(...) printf(__VA_ARGS__);
+#else
+#define ARBCONV_DBG_RE(...)
+#endif
 
-#define IS_SWIZZLE(str) (((str)[0] >= 'w') && ((str)[0] <= 'z') && \
- (((str)[1] == '\0') || (((str)[1] >= 'w') && ((str)[1] <= 'z') && \
- (((str)[2] == '\0') || (((str)[2] >= 'w') && ((str)[2] <= 'z') && \
- (((str)[3] == '\0') || (((str)[3] >= 'w') && ((str)[3] <= 'z') && \
+#define IS_SWIZ_VALUE(v) ((((v) >= 'w') && ((v) <= 'z')) || \
+  ((v) == 'r') || ((v) == 'g') || ((v) == 'b') || ((v) == 'a'))
+#define IS_SWIZZLE(str) (IS_SWIZ_VALUE((str)[0]) && \
+ (((str)[1] == '\0') || (IS_SWIZ_VALUE((str)[1]) && \
+ (((str)[2] == '\0') || (IS_SWIZ_VALUE((str)[2]) && \
+ (((str)[3] == '\0') || (IS_SWIZ_VALUE((str)[3]) && \
   ((str)[4] == '\0'))))))))
 #define IS_NEW_STR_OR_SWIZZLE(str, t) (((str)[0] == ',') || ((t == 1) && IS_SWIZZLE(str)))
 #define IS_NONE_OR_SWIZZLE (!newVar->strLen || IS_SWIZZLE(newVar->strParts[0]))
@@ -460,7 +466,7 @@ int resolveAttrib(sCurStatus_NewVar *newVar, int vertex) {
 	
 	return 0;
 }
-int resolveOutput(sCurStatus_NewVar *newVar, int vertex, int *hasFogFragCoord) {
+int resolveOutput(sCurStatus_NewVar *newVar, int vertex, struct sSpecialCases *specialCases) {
 	char *tok = popFIFO((sArray*)newVar);
 	
 	if (!tok) {
@@ -557,7 +563,7 @@ int resolveOutput(sCurStatus_NewVar *newVar, int vertex, int *hasFogFragCoord) {
 		} else if (!strcmp(tok, "fogcoord")) {
 			// result.fogcoord => gl_FogFragCoord
 			free(tok);
-			*hasFogFragCoord = 1;
+			specialCases->hasFogFragCoord = 1;
 			pushArray((sArray*)&newVar->var->init, strdup("gl4es_FogFragCoordTemp"));
 			newVar->var->init.strings_total_len = 22;
 		} else if (!strcmp(tok, "pointsize")) {
@@ -610,7 +616,8 @@ int resolveOutput(sCurStatus_NewVar *newVar, int vertex, int *hasFogFragCoord) {
 		} else if (!strcmp(tok, "depth")) {
 			// result.depth => gl_FragDepth
 			free(tok);
-			pushArray((sArray*)&newVar->var->init, strdup("gl_FragDepth"));
+			specialCases->isDepthReplacing = 1;
+			pushArray((sArray*)&newVar->var->init, strdup("gl4es_FragDepthTemp"));
 			newVar->var->init.strings_total_len = 12;
 		} else {
 			ARBCONV_DBG_RE("Failed to get output: result.%s\n", tok)
@@ -1011,8 +1018,15 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 					if (newVar->strLen && !IS_NEW_STR_OR_SWIZZLE(newVar->strParts[0], type)) {
 						tok = popFIFO((sArray*)newVar);
 						if (!strcmp(tok, "row")
-						 && newVar->strLen && (newVar->strParts[0][0] >= '0') && (newVar->strParts[0][0] <= '9')) {
+						 && ((newVar->strLen && (newVar->strParts[0][0] >= '0') && (newVar->strParts[0][0] <= '9'))
+						     || ((newVar->strLen >= 3) && (newVar->strParts[0][0] == '[')
+						         && (newVar->strParts[1][0] >= '0') && (newVar->strParts[1][0] <= '9')))) {
 							free(tok);
+							int freeLast = 0;
+							if (newVar->strParts[0][0] == '[') {
+								free(popFIFO((sArray*)newVar));
+								freeLast = 1;
+							}
 							tok = popFIFO((sArray*)newVar);
 							for (char *numPtr = tok; *numPtr; ++numPtr) {
 								start = start * 10 + *numPtr - '0';
@@ -1032,6 +1046,14 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 							} else {
 								end = start;
 							}
+							
+							if (freeLast) {
+								if (newVar->strParts[0][0] != ']') {
+									ARBCONV_DBG_RE("Failed to get param: [%s].row[%d..%d(not ])\n", matrixName, start, end)
+									return NULL;
+								}
+								free(popFIFO((sArray*)newVar));
+							}
 						} else {
 							ARBCONV_DBG_RE("Failed to get param: [%s].%s\n", matrixName, tok)
 							free(tok);
@@ -1047,6 +1069,70 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 				} else {
 					matrixName = "gl_ModelViewMatrixTranspose";
 					mtxNameLen = 27;
+				}
+			} else if (!strcmp(tok, "projection")) {
+				free(tok);
+				if (newVar->strLen && !IS_NEW_STR_OR_SWIZZLE(newVar->strParts[0], type)) {
+					if (!strcmp(newVar->strParts[0], "invtrans")) {
+						free(popFIFO((sArray*)newVar));
+						matrixName = "gl_ProjectionMatrixInverse";
+						mtxNameLen = 35;
+					} else if (!strcmp(newVar->strParts[0], "inverse")) {
+						free(popFIFO((sArray*)newVar));
+						matrixName = "gl_ProjectionMatrixInverseTranspose";
+						mtxNameLen = 44;
+					} else if (!strcmp(newVar->strParts[0], "transpose")) {
+						free(popFIFO((sArray*)newVar));
+						matrixName = "gl_ProjectionMatrix";
+						mtxNameLen = 28;
+					} else {
+						matrixName = "gl_ProjectionMatrixTranspose";
+						mtxNameLen = 37;
+					}
+					
+					if (newVar->strLen && !IS_NEW_STR_OR_SWIZZLE(newVar->strParts[0], type)) {
+						tok = popFIFO((sArray*)newVar);
+						if (!strcmp(tok, "row")
+						 && (newVar->strLen >= 3) && (newVar->strParts[0][0] == '[')
+						 && (newVar->strParts[1][0] >= '0') && (newVar->strParts[1][0] <= '9')) {
+							free(tok);
+							free(popFIFO((sArray*)newVar));
+							tok = popFIFO((sArray*)newVar);
+							for (char *numPtr = tok; *numPtr; ++numPtr) {
+								start = start * 10 + *numPtr - '0';
+							}
+							free(tok);
+							
+							if ((newVar->strLen >= 3) && (newVar->strParts[0][0] == '.')
+							 && (newVar->strParts[0][1] == '.')
+							 && (newVar->strParts[1][0] >= '0') && (newVar->strParts[1][0] <= '9')) {
+								end = 0;
+								free(popFIFO((sArray*)newVar));
+								tok = popFIFO((sArray*)newVar);
+								for (char *numPtr = tok; *numPtr; ++numPtr) {
+									end = end * 10 + *numPtr - '0';
+								}
+								free(tok);
+							} else {
+								end = start;
+							}
+							
+							tok = popFIFO((sArray*)newVar);
+							if (tok[0] != ']') {
+								ARBCONV_DBG_RE("Failed to get param: [%s].row[%d..%d(not ])\n", matrixName, start, end)
+								free(tok);
+								return NULL;
+							}
+							free(tok);
+						} else {
+							ARBCONV_DBG_RE("Failed to get param: [%s].%s\n", matrixName, tok)
+							free(tok);
+							return NULL;
+						}
+					}
+				} else {
+					matrixName = "gl_ProjectionMatrixTranspose";
+					mtxNameLen = 37;
 				}
 			} else if (!strcmp(tok, "mvp")) {
 				free(tok);
@@ -1322,6 +1408,8 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 			return NULL;
 		}
 	} else if (tok[0] == '{') {
+		int valuesCnt = 0;
+		
 		sCurStatus pseudoSt;
 		pseudoSt.curValue.newVar.state = 0;
 		pseudoSt.status = ST_VARIABLE_INIT;
@@ -1362,6 +1450,7 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 					pseudoSt.status = ST_ERROR;
 					continue;
 				}
+				++valuesCnt;
 				pseudoSt.curValue.newVar.state = 3*(pseudoSt.curValue.newVar.state / 3) + 2;
 				break;
 				
@@ -1411,7 +1500,9 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 			return NULL;
 		}
 		
-		if (appendString(&pseudoSt, ")", 1)) {
+		if (((((valuesCnt != 1) && (valuesCnt != 4))) || appendString(&pseudoSt, ")", 1))
+		  && ( (valuesCnt != 2)                       || appendString(&pseudoSt, ", 0., 0.)", 9))
+		  && ( (valuesCnt != 3)                       || appendString(&pseudoSt, ", 0.)", 5))) {
 			free(pseudoSt.outputString);
 			ARBCONV_DBG_RE("Failed to get param: not enough memory?\n")
 			return NULL;
@@ -1420,6 +1511,15 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 		char **r = (char**)calloc(2, sizeof(char*));
 		r[0] = pseudoSt.outputString;
 		r[1] = NULL;
+		return r;
+	} else if ((tok[0] >= '0') && (tok[0] <= '9')) {
+		// Scalar
+		char **r = (char**)calloc(2, sizeof(char*));
+		r[0] = (char*)calloc(13 + 4*strlen(tok), sizeof(char));
+		r[1] = NULL;
+		
+		sprintf(r[0], "vec4(%s, %s, %s, %s)", tok, tok, tok, tok);
+		
 		return r;
 	} else {
 		ARBCONV_DBG_RE("Failed to get param: %s\n", tok)
@@ -1492,10 +1592,10 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
@@ -1518,7 +1618,7 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 	 \ ? "state" "." "matrix" "." "program" "[" <stateProgramMatNum> "]" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "program" "." "env" "[" <progEnvParamNum> "]"
 	 \ V "program" "." "local" "[" <progLocalParamNum> "]"
-	 \ * <optionalSign> <floatConstant>
+	 \ V <optionalSign> <floatConstant>
 	 \ V "{" <optionalSign> <floatConstant> "}"
 	 \ V "{" <optionalSign> <floatConstant> "," <optionalSign> <floatConstant> "}"
 	 \ V "{" <optionalSign> <floatConstant> "," <optionalSign> <floatConstant> "," <optionalSign> <floatConstant> "}"
@@ -1589,10 +1689,10 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
@@ -1686,10 +1786,10 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
@@ -1726,14 +1826,14 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "inverse" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "transpose" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "invtrans" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection"
-	 \ * "state" "." "matrix" "." "projection" "." "inverse"
-	 \ * "state" "." "matrix" "." "projection" "." "transpose"
-	 \ * "state" "." "matrix" "." "projection" "." "invtrans"
-	 \ * "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection"
+	 \ V "state" "." "matrix" "." "projection" "." "inverse"
+	 \ V "state" "." "matrix" "." "projection" "." "transpose"
+	 \ V "state" "." "matrix" "." "projection" "." "invtrans"
+	 \ V "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp"
 	 \ V "state" "." "matrix" "." "mvp" "." "inverse"
 	 \ V "state" "." "matrix" "." "mvp" "." "transpose"
@@ -1778,7 +1878,7 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 	 \ V "program" "." "env" "[" <progEnvParamNum> ".." <progEnvParamNum> "]"
 	 \ V "program" "." "local" "[" <progLocalParamNum> "]"
 	 \ V "program" "." "local" "[" <progLocalParamNum> ".." <progLocalParamNum> "]"
-	 \ * <optionalSign> <floatConstant>
+	 \ V <optionalSign> <floatConstant>
 	 \ V "{" <optionalSign> <floatConstant> "}"
 	 \ V "{" <optionalSign> <floatConstant> "," <optionalSign> <floatConstant> "}"
 	 \ V "{" <optionalSign> <floatConstant> "," <optionalSign> <floatConstant> "," <optionalSign> <floatConstant> "}"
@@ -1864,10 +1964,10 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
@@ -1890,7 +1990,7 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 	 \ ? "state" "." "matrix" "." "program" "[" <stateProgramMatNum> "]" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "program" "." "env" "[" <progEnvParamNum> "]"
 	 \ V "program" "." "local" "[" <progLocalParamNum> "]"
-	 \ * <optionalSign> <floatConstant>
+	 \ V <optionalSign> <floatConstant>
 	 \ V "{" <optionalSign> <floatConstant> "}"
 	 \ V "{" <optionalSign> <floatConstant> "," <optionalSign> <floatConstant> "}"
 	 \ V "{" <optionalSign> <floatConstant> "," <optionalSign> <floatConstant> "," <optionalSign> <floatConstant> "}"
@@ -1945,10 +2045,10 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
@@ -2026,10 +2126,10 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "inverse" "." "row" "[" <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp" "." "transpose" "." "row" "[" <stateMatrixRowNum> "]"
@@ -2066,14 +2166,14 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "inverse" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "transpose" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "modelview" "[" <stateModMatNum> "]" "." "invtrans" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection"
-	 \ * "state" "." "matrix" "." "projection" "." "inverse"
-	 \ * "state" "." "matrix" "." "projection" "." "transpose"
-	 \ * "state" "." "matrix" "." "projection" "." "invtrans"
-	 \ * "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
-	 \ * "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection"
+	 \ V "state" "." "matrix" "." "projection" "." "inverse"
+	 \ V "state" "." "matrix" "." "projection" "." "transpose"
+	 \ V "state" "." "matrix" "." "projection" "." "invtrans"
+	 \ V "state" "." "matrix" "." "projection" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "inverse" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "transpose" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
+	 \ V "state" "." "matrix" "." "projection" "." "invtrans" "." "row" "[" <stateMatrixRowNum> ".." <stateMatrixRowNum> "]"
 	 \ V "state" "." "matrix" "." "mvp"
 	 \ V "state" "." "matrix" "." "mvp" "." "inverse"
 	 \ V "state" "." "matrix" "." "mvp" "." "transpose"
@@ -2118,7 +2218,7 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 	 \ V "program" "." "env" "[" <progEnvParamNum> ".." <progEnvParamNum> "]"
 	 \ V "program" "." "local" "[" <progLocalParamNum> "]"
 	 \ V "program" "." "local" "[" <progLocalParamNum> ".." <progLocalParamNum> "]"
-	 \ * <optionalSign> <floatConstant>
+	 \ V <optionalSign> <floatConstant>
 	 \ V "{" <optionalSign> <floatConstant> "}"
 	 \ V "{" <optionalSign> <floatConstant> "," <optionalSign> <floatConstant> "}"
 	 \ V "{" <optionalSign> <floatConstant> "," <optionalSign> <floatConstant> "," <optionalSign> <floatConstant> "}"
@@ -2195,7 +2295,7 @@ char **resolveParam(sCurStatus_NewVar *newVar, int vertex, int type) {
 
 #define FAIL(str) curStatusPtr->status = ST_ERROR; if (*error_msg) free(*error_msg); \
 		*error_msg = strdup(str); return
-void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *hasFogFragCoord) {
+void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, struct sSpecialCases *specialCases) {
 	if (((curStatusPtr->curToken == TOK_UNKNOWN) && (curStatusPtr->status != ST_LINE_COMMENT))
 		|| (curStatusPtr->curToken == TOK_NULL)) {
 		FAIL("Unknown token");
@@ -2299,6 +2399,20 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 					free(tok);
 					FAIL("Cannot redefine variable");
 				}
+				
+				if (!strcmp(tok, "half")) {
+					// Special case for the 'half' keyword
+					pushArray((sArray*)curStatusPtr->curValue.newVar.var, strdup("gl4es_half"));
+					
+					// Hopefully this doesn't make a free-after-free in case of error (though it shouldn't)
+					int ret;
+					khint_t varIdx = kh_put(variables, curStatusPtr->varsMap, tok, &ret);
+					if (ret < 0) {
+						FAIL("Unknown error");
+					}
+					kh_val(curStatusPtr->varsMap, varIdx) = curStatusPtr->curValue.newVar.var;
+				}
+				
 				pushArray((sArray*)curStatusPtr->curValue.newVar.var, tok);
 				curStatusPtr->curValue.newVar.state = 1;
 				break; }
@@ -2370,6 +2484,20 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 					free(tok);
 					FAIL("Cannot redefine variable");
 				}
+				
+				if (!strcmp(tok, "half")) {
+					// Special case for the 'half' keyword
+					pushArray((sArray*)curStatusPtr->curValue.newVar.var, strdup("gl4es_half"));
+					
+					// Hopefully this doesn't make a free-after-free in case of error (though it shouldn't)
+					int ret;
+					khint_t varIdx = kh_put(variables, curStatusPtr->varsMap, tok, &ret);
+					if (ret < 0) {
+						FAIL("Unknown error");
+					}
+					kh_val(curStatusPtr->varsMap, varIdx) = curStatusPtr->curValue.newVar.var;
+				}
+				
 				pushArray((sArray*)curStatusPtr->curValue.newVar.var, tok);
 				curStatusPtr->curValue.newVar.state = 1;
 				break; }
@@ -2456,6 +2584,15 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 		switch (curStatusPtr->curValue.newVar.var->type) {
 		case VARTYPE_ATTRIB:
 			switch (curStatusPtr->curToken) {
+			case TOK_INTEGER:
+				if (curStatusPtr->curValue.newVar.state != 2) {
+					FAIL("Invalid state");
+				}
+				
+				pushArray((sArray*)&curStatusPtr->curValue.newVar, getToken(curStatusPtr));
+				curStatusPtr->curValue.newVar.state = 3;
+				break;
+				
 			case TOK_IDENTIFIER: {
 				if (curStatusPtr->curValue.newVar.state != 0) {
 					FAIL("Invalid state");
@@ -2472,6 +2609,24 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 					FAIL("Invalid state");
 				}
 				curStatusPtr->curValue.newVar.state = 0;
+				break;
+				
+			case TOK_LSQBRACKET:
+				if (curStatusPtr->curValue.newVar.state != 1) {
+					FAIL("Invalid state");
+				}
+				
+				pushArray((sArray*)&curStatusPtr->curValue.newVar, getToken(curStatusPtr));
+				curStatusPtr->curValue.newVar.state = 2;
+				break;
+				
+			case TOK_RSQBRACKET:
+				if (curStatusPtr->curValue.newVar.state != 3) {
+					FAIL("Invalid state");
+				}
+				
+				pushArray((sArray*)&curStatusPtr->curValue.newVar, getToken(curStatusPtr));
+				curStatusPtr->curValue.newVar.state = 1;
 				break;
 				
 			case TOK_END_OF_INST: {
@@ -2544,7 +2699,7 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 					FAIL("Invalid state");
 				}
 				
-				if (resolveOutput(&curStatusPtr->curValue.newVar, vertex, hasFogFragCoord)) {
+				if (resolveOutput(&curStatusPtr->curValue.newVar, vertex, specialCases)) {
 					FAIL("Not a valid output");
 				}
 				
@@ -2582,12 +2737,21 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 			
 		case VARTYPE_PARAM:
 			switch (curStatusPtr->curToken) {
+			case TOK_SIGN:
+				if ((curStatusPtr->curValue.newVar.state < 4) || (curStatusPtr->curValue.newVar.state > 10)
+					|| (curStatusPtr->curValue.newVar.state % 2)) {
+					FAIL("Invalid state");
+				}
+				
+				pushArray((sArray*)&curStatusPtr->curValue.newVar, getToken(curStatusPtr));
+				break;
+				
 			case TOK_INTEGER:
-				/* ...
+				/* ... 0 works, too, in theory
 				if (curStatusPtr->curValue.newVar.state != 2) {
 					FAIL("Invalid state");
 				} */
-				if ((curStatusPtr->curValue.newVar.state < 2) || (curStatusPtr->curValue.newVar.state > 10)
+				if ((curStatusPtr->curValue.newVar.state > 10)
 					|| (curStatusPtr->curValue.newVar.state % 2)) {
 					FAIL("Invalid state");
 				}
@@ -2607,7 +2771,7 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 				break;
 				
 			case TOK_FLOATCONST:
-				if ((curStatusPtr->curValue.newVar.state < 4) || (curStatusPtr->curValue.newVar.state > 10)
+				if ((curStatusPtr->curValue.newVar.state == 2) || (curStatusPtr->curValue.newVar.state > 10)
 					|| (curStatusPtr->curValue.newVar.state % 2)) {
 					FAIL("Invalid state");
 				}
@@ -2670,8 +2834,20 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 				curStatusPtr->curValue.newVar.state = 4;
 				break;
 			case TOK_RBRACE:
-				if ((curStatusPtr->curValue.newVar.state != 5) && (curStatusPtr->curValue.newVar.state != 11)) {
+				if ((curStatusPtr->curValue.newVar.state != 5) && (curStatusPtr->curValue.newVar.state != 7)
+					&& (curStatusPtr->curValue.newVar.state != 9) && (curStatusPtr->curValue.newVar.state != 11)) {
 					FAIL("Invalid state");
+				}
+				
+				if (curStatusPtr->curValue.newVar.state == 7) {
+					pushArray((sArray*)&curStatusPtr->curValue.newVar, strdup(","));
+					pushArray((sArray*)&curStatusPtr->curValue.newVar, strdup("0.0"));
+					curStatusPtr->curValue.newVar.state += 2;
+				}
+				if (curStatusPtr->curValue.newVar.state == 9) {
+					pushArray((sArray*)&curStatusPtr->curValue.newVar, strdup(","));
+					pushArray((sArray*)&curStatusPtr->curValue.newVar, strdup("0.0"));
+					curStatusPtr->curValue.newVar.state += 2;
 				}
 				
 				pushArray((sArray*)&curStatusPtr->curValue.newVar, getToken(curStatusPtr));
@@ -2702,6 +2878,8 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 					pushArray((sArray*)&curStatusPtr->curValue.newVar.var->init, *parm);
 				}
 				free(param);
+				
+				curStatusPtr->curValue.newVar.var->init.strings_total_len = -1;
 				
 				int ret;
 				khint_t varIdx = kh_put(
@@ -2982,8 +3160,15 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 			}
 			
 			sVariable *var = kh_val(curStatusPtr->varsMap, varIdx);
-			
 			pushArray((sArray*)var, curStatusPtr->curValue.string);
+			
+			int ret;
+			varIdx = kh_put(variables, curStatusPtr->varsMap, curStatusPtr->curValue.string, &ret);
+			if (ret < 0) {
+				FAIL("Unknown error");
+			}
+			kh_val(curStatusPtr->varsMap, varIdx) = var;
+			
 			curStatusPtr->valueType = TYPE_NONE;
 			break;
 			
@@ -3023,14 +3208,17 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 #define STATE_AFTER_TEXSAMPLER 14
 #define STATE_AFTER_NUMBER 15
 #define STATE_LSQBR_START 16
-#define STATE_LSQBR_ADDR 17
-#define STATE_LSQBR_ADOT 18
-#define STATE_LSQBR_ADOK 19
-#define STATE_LSQBR_SIGN 20
-#define STATE_LSQBR_END 21
+#define STATE_LSQBR_END 17
+#define STATE_LBRACE 18
+#define STATE_LBRACE_NUM1 19
+#define STATE_LBRACE_COM1 20
+#define STATE_LBRACE_NUM2 21
+#define STATE_LBRACE_COM2 22
+#define STATE_LBRACE_NUM3 23
+#define STATE_LBRACE_COM3 24
+#define STATE_LBRACE_NUM4 25
+#define STATE_RBRACE 26
 #define STATE_AFTER_SWIZZLE -1
-		// Note: after thinking again, STATE_LSQBR_ADDR, STATE_LSQBR_ADOT, STATE_LSQBR_ADOK and
-		// STATE_LSQBR_SIGN shouldn't exist (no relative addressing when using implicit params)
 		
 		sInstruction_Vars *curVarPtr = &curStatusPtr->curValue.newInst.inst.vars[curStatusPtr->curValue.newInst.curArg];
 		int texSampler = INSTTEX(curStatusPtr->curValue.newInst.inst.type)
@@ -3042,11 +3230,7 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 			case STATE_AFTER_VALID_LSQBR_ADDR:
 			case STATE_AFTER_VALID_LSQBR_ADOT:
 			case STATE_AFTER_VALID_LSQBR_ADOK:
-			case STATE_AFTER_VALID_LSQBR_SIGN:
-			case STATE_LSQBR_ADDR:
-			case STATE_LSQBR_ADOT:
-			case STATE_LSQBR_ADOK:
-			case STATE_LSQBR_SIGN: {
+			case STATE_AFTER_VALID_LSQBR_SIGN: {
 				char *faa = (char*)realloc(
 					curVarPtr->floatArrAddr,
 					(strlen(curVarPtr->floatArrAddr) + getTokenLength(curStatusPtr) + 1) * sizeof(char)
@@ -3071,8 +3255,7 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 				curStatusPtr->curValue.newInst.state = STATE_AFTER_SIGN;
 				break;
 				
-			case STATE_AFTER_VALID_LSQBR_ADOK:
-			case STATE_LSQBR_ADOK: {
+			case STATE_AFTER_VALID_LSQBR_ADOK: {
 				char *faa = (char*)realloc(
 					curVarPtr->floatArrAddr,
 					(strlen(curVarPtr->floatArrAddr) + getTokenLength(curStatusPtr) + 1) * sizeof(char)
@@ -3099,13 +3282,13 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 						FAIL("Invalid texture sampler");
 					}
 					curStatusPtr->curValue.newInst.state = STATE_AFTER_TEXSPLINT;
-				} else {
-					sVariable *cst = createVariable(VARTYPE_CONST);
-					pushArray((sArray*)&cst->init, getToken(curStatusPtr));
-					pushArray((sArray*)&curStatusPtr->variables, cst);
-					curVarPtr->var = cst;
-					curStatusPtr->curValue.newInst.state = STATE_AFTER_NUMBER;
+					break;
 				}
+				
+				/* FALLTHROUGH */
+			case STATE_AFTER_SIGN:
+				pushArray((sArray*)&curStatusPtr->_fixedNewVar, getToken(curStatusPtr));
+				curStatusPtr->curValue.newInst.state = STATE_AFTER_NUMBER;
 				break;
 				
 			case STATE_AFTER_VALID_LSQBR_START:
@@ -3132,9 +3315,12 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 				break;
 			}
 				
-			case STATE_LSQBR_SIGN:
+			case STATE_LBRACE:
+			case STATE_LBRACE_COM1:
+			case STATE_LBRACE_COM2:
+			case STATE_LBRACE_COM3:
 				pushArray((sArray*)&curStatusPtr->_fixedNewVar, getToken(curStatusPtr));
-				curStatusPtr->curValue.newInst.state = STATE_LSQBR_END;
+				++curStatusPtr->curValue.newInst.state;
 				break;
 				
 			default:
@@ -3144,14 +3330,20 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 			
 		case TOK_FLOATCONST:
 			switch (curStatusPtr->curValue.newInst.state) {
-			case STATE_START: {
-				sVariable *cst = createVariable(VARTYPE_CONST);
-				pushArray((sArray*)&cst->init, getToken(curStatusPtr));
-				pushArray((sArray*)&curStatusPtr->variables, cst);
-				curVarPtr->var = cst;
+			case STATE_START:
+			case STATE_AFTER_SIGN: {
+				pushArray((sArray*)&curStatusPtr->_fixedNewVar, getToken(curStatusPtr));
 				curStatusPtr->curValue.newInst.state = STATE_AFTER_NUMBER;
 				break;
 			}
+				
+			case STATE_LBRACE:
+			case STATE_LBRACE_COM1:
+			case STATE_LBRACE_COM2:
+			case STATE_LBRACE_COM3:
+				pushArray((sArray*)&curStatusPtr->_fixedNewVar, getToken(curStatusPtr));
+				++curStatusPtr->curValue.newInst.state;
+				break;
 				
 			default:
 				FAIL("Invalid state");
@@ -3228,8 +3420,7 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 				
 				break; }
 				
-			case STATE_AFTER_VALID_LSQBR_START:
-			case STATE_LSQBR_START: {
+			case STATE_AFTER_VALID_LSQBR_START: {
 				khint_t idx = kh_get(variables, curStatusPtr->varsMap, tok);
 				if (!kh_truly_exist(curStatusPtr->varsMap, idx)) {
 					free(tok);
@@ -3246,8 +3437,7 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 				break;
 			}
 				
-			case STATE_AFTER_VALID_LSQBR_ADOT:
-			case STATE_LSQBR_ADOT: {
+			case STATE_AFTER_VALID_LSQBR_ADOT: {
 				if ((getTokenLength(curStatusPtr) != 1) || (tok[0] != 'x')) {
 					free(tok);
 					FAIL("Invalid address mask");
@@ -3309,8 +3499,7 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 				curStatusPtr->curValue.newInst.state = STATE_AFTER_VALID_DOT;
 				break;
 				
-			case STATE_AFTER_VALID_LSQBR_ADDR:
-			case STATE_LSQBR_ADDR: {
+			case STATE_AFTER_VALID_LSQBR_ADDR: {
 				char *faa = (char*)realloc(
 					curVarPtr->floatArrAddr,
 					(strlen(curVarPtr->floatArrAddr) + getTokenLength(curStatusPtr) + 1) * sizeof(char)
@@ -3366,15 +3555,28 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 			}
 			break;
 			
-		case TOK_LBRACE: /* TODO: { <signedFloat> *1-4 } */
+		case TOK_LBRACE:
 			switch (curStatusPtr->curValue.newInst.state) {
+			case STATE_START:
+				pushArray((sArray*)&curStatusPtr->_fixedNewVar, getToken(curStatusPtr));
+				curStatusPtr->curValue.newInst.state = STATE_LBRACE;
+				break;
+				
 			default:
 				FAIL("Invalid state");
 			}
 			break;
 			
-		case TOK_RBRACE: /* TODO: { <signedFloat> *1-4 } */
+		case TOK_RBRACE:
 			switch (curStatusPtr->curValue.newInst.state) {
+			case STATE_LBRACE_NUM1:
+			case STATE_LBRACE_NUM2:
+			case STATE_LBRACE_NUM3:
+			case STATE_LBRACE_NUM4:
+				pushArray((sArray*)&curStatusPtr->_fixedNewVar, getToken(curStatusPtr));
+				curStatusPtr->curValue.newInst.state = STATE_RBRACE;
+				break;
+				
 			default:
 				FAIL("Invalid state");
 			}
@@ -3401,10 +3603,21 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 			/* FALLTHROUGH */
 		case TOK_COMMA:
 			switch (curStatusPtr->curValue.newInst.state) {
+			case STATE_LBRACE_NUM1:
+			case STATE_LBRACE_NUM2:
+			case STATE_LBRACE_NUM3:
+			case STATE_LBRACE_NUM4:
+				pushArray((sArray*)&curStatusPtr->_fixedNewVar, getToken(curStatusPtr));
+				++curStatusPtr->curValue.newInst.state;
+				return;
+				
 			case STATE_AFTER_ELEMENT:
+			case STATE_AFTER_NUMBER: // Should be able to go
+			case STATE_RBRACE:       // directly to the resolveParam part...
 				if (INSTTEX(curStatusPtr->curValue.newInst.inst.type)
 				 && (curStatusPtr->curValue.newInst.curArg == 2)) {
-					if ((curStatusPtr->_fixedNewVar.strLen != 4) || (curStatusPtr->_fixedNewVar.strParts[1][0] != '[')
+					if ((curStatusPtr->_fixedNewVar.strLen != 4)
+					 || (curStatusPtr->_fixedNewVar.strParts[1][0] != '[')
 					 || (curStatusPtr->_fixedNewVar.strParts[3][0] != ']')
 					 || strcmp(curStatusPtr->_fixedNewVar.strParts[0], "texture")) {
 						FAIL("Invalid texture instruction");
@@ -3449,7 +3662,7 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 					 || (!vertex && !strcmp(curStatusPtr->_fixedNewVar.strParts[0], "fragment"))) {
 						failure = resolveAttrib(&curStatusPtr->_fixedNewVar, vertex);
 					} else if (!strcmp(curStatusPtr->_fixedNewVar.strParts[0], "result")) {
-						failure = resolveOutput(&curStatusPtr->_fixedNewVar, vertex, hasFogFragCoord);
+						failure = resolveOutput(&curStatusPtr->_fixedNewVar, vertex, specialCases);
 					} else {
 						char **resolved = resolveParam(&curStatusPtr->_fixedNewVar, vertex, 1);
 						
@@ -3566,9 +3779,16 @@ void parseToken(sCurStatus* curStatusPtr, int vertex, char **error_msg, int *has
 #undef STATE_AFTER_TEXSAMPLER
 #undef STATE_AFTER_NUMBER
 #undef STATE_LSQBR_START
-#undef STATE_LSQBR_ADDR
-#undef STATE_LSQBR_SIGN
 #undef STATE_LSQBR_END
+#undef STATE_LBRACE
+#undef STATE_LBRACE_NUM1
+#undef STATE_LBRACE_COM1
+#undef STATE_LBRACE_NUM2
+#undef STATE_LBRACE_COM2
+#undef STATE_LBRACE_NUM3
+#undef STATE_LBRACE_COM3
+#undef STATE_LBRACE_NUM4
+#undef STATE_RBRACE
 #undef STATE_AFTER_SWIZZLE
 	}
 		

@@ -8,6 +8,7 @@
 #include "preproc.h"
 #include "string_utils.h"
 #include "shader_hacks.h"
+#include "logs.h"
 
 typedef struct {
     const char* glname;
@@ -262,8 +263,15 @@ static const char* gl4es_ftransformSource =
 " return gl_ModelViewProjectionMatrix * gl_Vertex;\n"
 "}\n";
 
-static const char* gl4es_dummyClipVertex = 
-"vec4 dummyClipVertex_%d";
+static const char* gl4es_ClipVertex = 
+"vec4 gl4es_ClipVertex;\n";
+
+static const char* gl4es_ClipVertexSource = 
+"gl4es_ClipVertex";
+
+static const char* gl4es_ClipVertex_clip =
+"\nif(any(lessThanEqual(gl4es_ClipVertex.xyz, vec3(-gl4es_ClipVertex.w)))"
+" || any(greaterThanEqual(gl4es_ClipVertex.xyz, vec3(gl4es_ClipVertex.w)))) discard;\n";
 
 static const char* gl_TexCoordSource = "gl_TexCoord[";
 
@@ -431,6 +439,8 @@ char gl4es_VA[MAX_VATTRIB][32] = {0};
 
 char* ConvertShader(const char* pEntry, int isVertex, shaderconv_need_t *need)
 {
+  #define ShadAppend(S) Tmp = Append(Tmp, &tmpsize, S)
+
   if(gl_VA[0][0]=='\0') {
     for (int i=0; i<MAX_VATTRIB; ++i) {
       sprintf(gl_VA[i], "%s%d", gl_VertexAttrib, i);
@@ -1076,13 +1086,18 @@ char* ConvertShader(const char* pEntry, int isVertex, shaderconv_need_t *need)
     Tmp = InplaceReplace(Tmp, &tmpsize, "gl_MaxTextureCoords", "_gl4es_MaxTextureCoords");
   }
   if(strstr(Tmp, "gl_ClipVertex")) {
-    // gl_ClipVertex is not handled for now
-    // Proper way would be to copy handling from fpe_shader, but then, need to use gl_ClipPlane...
-    static int ncv = 0;
-    char CV[60];
-    sprintf(CV, gl4es_dummyClipVertex, ncv);
-    ++ncv;
-    Tmp = InplaceReplace(Tmp, &tmpsize, "gl_ClipVertex", CV);
+    Tmp = InplaceInsert(GetLine(Tmp, 2), gl4es_ClipVertex, Tmp, &tmpsize);
+    headline+=CountLine(gl4es_ClipVertex);
+    Tmp = InplaceReplace(Tmp, &tmpsize, "gl_ClipVertex", gl4es_ClipVertexSource);
+    need->need_clipvertex = 1;
+  } else if(isVertex && need && need->need_clipvertex) {
+    Tmp = InplaceInsert(GetLine(Tmp, 2), gl4es_ClipVertex, Tmp, &tmpsize);
+    headline+=CountLine(gl4es_ClipVertex);
+    char *p = strchr(FindStringNC(Tmp, "main"), '{'); // find the openning curly bracket of main
+    if(p) {
+      // add regular clipping at start of main
+      Tmp = InplaceInsert(p+1, gl4es_ClipVertex_clip, Tmp, &tmpsize);
+    }
   }
   //oldprogram uniforms...
   if(FindString(Tmp, gl_ProgramEnv)) {
