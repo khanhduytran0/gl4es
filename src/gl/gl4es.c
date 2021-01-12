@@ -880,7 +880,7 @@ void glPushCall(void *call) {
 
 void gl4es_glCallLists(GLsizei n, GLenum type, const GLvoid *lists) {
     #define call(name, type) \
-        case name: glCallList(((type *)lists)[i] + glstate->list.base); break
+        case name: gl4es_glCallList(((type *)lists)[i] + glstate->list.base); break
 
     // seriously wtf
     #define call_bytes(name, stride)                             \

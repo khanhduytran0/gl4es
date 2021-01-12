@@ -28,6 +28,13 @@ void gl4es_Stub(void *x, ...) {
     return;
 }
 
+void gl4es_glEnableClientStatei(GLenum array, GLuint index) {
+    gl4es_glEnableClientStateIndexed(array, index);
+}
+void gl4es_glDisableClientStatei(GLenum array, GLuint index) {
+    gl4es_glDisableClientStateIndexed(array, index);
+}
+
 void *gl4es_GetProcAddress(const char *name) {
     DBG(printf("glGetProcAddress(\"%s\")", name);)
     // generated gles wrappers

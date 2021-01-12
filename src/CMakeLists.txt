@@ -214,6 +214,10 @@ else()
         "-framework OpenGLES"
     )
     
+    target_link_libraries(GL
+        "-framework OpenGLES"
+    )
+    
     if(CMAKE_SHARED_LIBRARY_SUFFIX MATCHES ".so")
         set_target_properties(GL PROPERTIES SUFFIX ".so.1")
     endif()
