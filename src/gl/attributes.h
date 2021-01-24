@@ -2,7 +2,7 @@
 #define _GL4ES_ATTRIBUTES_H_
 
 #ifndef EXPORT
- #if defined(__EMSCRIPTEN__) || defined(__APPLE__)
+ #if defined(__EMSCRIPTEN__) // || defined(__APPLE__)
    #define EXPORT
  #elif defined(STATICLIB)
    #define EXPORT
