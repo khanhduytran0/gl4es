@@ -165,6 +165,11 @@ else()
     include_directories(glx)
     list(APPEND GL_SRC
         glx/hardext.c
+        glx/hardext.c
+        glx/glx.c
+        glx/lookup.c
+        glx/gbm.c
+        glx/streaming.c
     )
     message(STATUS "Not on Linux: building without GLX support.")
 endif()
