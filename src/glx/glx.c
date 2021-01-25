@@ -2902,6 +2902,12 @@ void glXDestroyPixmap(Display *display, void *pixmap) AliasExport("gl4es_glXDest
 GLXContext glXCreateContextAttribs(Display *dpy, GLXFBConfig config, GLXContext share_context, Bool direct, const int *attrib_list) AliasExport("gl4es_glXCreateContextAttribs");
 #endif
 
+#ifdef __APPLE__
+void glXSwapBuffers(Display *display, GLXDrawable drawable) {
+    gl4es_glXSwapBuffers(display, drawable);
+}
+#endif
+
 void glXSwapInterval(int interval) AliasExport("gl4es_glXSwapInterval");
 void glXSwapIntervalMESA(int interval) AliasExport("gl4es_glXSwapInterval");
 void glXSwapIntervalSGI(int interval) AliasExport("gl4es_glXSwapInterval");
