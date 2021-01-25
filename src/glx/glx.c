@@ -425,9 +425,9 @@ static void init_vsync() {
 }
 
 static void xrefresh() {
-#ifndef __APPLE __
+#ifndef __APPLE__
     int dummy = system("xrefresh");
-#endif // __APPLE __
+#endif // __APPLE__
 }
 
 #ifdef PANDORA
