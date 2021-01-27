@@ -212,7 +212,8 @@ else()
     endif()
     
     target_link_libraries(GL
-        "-framework OpenGLES"
+        "-F../Frameworks"
+        "-framework MetalANGLE"
     )
     
     if(CMAKE_SHARED_LIBRARY_SUFFIX MATCHES ".so")
