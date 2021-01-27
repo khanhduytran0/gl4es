@@ -212,7 +212,7 @@ else()
     endif()
     
     target_link_libraries(GL
-        "-F../Frameworks"
+        "-FFrameworks"
         "-framework MetalANGLE"
     )
     
