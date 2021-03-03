@@ -329,9 +329,16 @@ static void *swizzle_texture(GLsizei width, GLsizei height,
                 *format = GL_RGBA;
                 break;
             case GL_BGRA:
-                if(hardext.bgra8888 && ((*type)==GL_UNSIGNED_BYTE || (*type)==GL_FLOAT || (*type)==GL_HALF_FLOAT)) {
+                if(hardext.bgra8888 && ((*type)==GL_UNSIGNED_BYTE || (*type)==GL_FLOAT || (*type)==GL_HALF_FLOAT ||
+                #ifdef __BIG_ENDIAN__
+                    (((*type)==GL_UNSIGNED_INT_8_8_8_8_REV) && hardext.rgba8888rev)
+                #else
+                    (((*type)==GL_UNSIGNED_INT_8_8_8_8) && hardext.rgba8888)
+                #endif
+                )) 
+                {
                     dest_format = GL_BGRA;
-                    *format = GL_BGRA;
+                    //*format = GL_BGRA;
                 } else {
                     convert = 1;
                     if(hardext.bgra8888 && 
@@ -340,9 +347,11 @@ static void *swizzle_texture(GLsizei width, GLsizei height,
                     #else
                         (*type==GL_UNSIGNED_INT_8_8_8_8)
                     #endif
-                    )
-                        *format = GL_BGRA;    //only type needs conversion
+                    ) {
+                        //*format = GL_BGRA;    //only type needs conversion
+                        dest_format = GL_BGRA;
                         check = 0;
+                    }
                 }
                 break;
             case GL_DEPTH24_STENCIL8:
@@ -391,9 +400,11 @@ static void *swizzle_texture(GLsizei width, GLsizei height,
                     convert = 1;
                 break;
             case GL_UNSIGNED_SHORT_1_5_5_5_REV:
-                if(dest_format==GL_RGBA)
-                    dest_type = GL_UNSIGNED_SHORT_5_5_5_1;
-                convert = 1;
+                if(!hardext.rgba1555rev) {
+                    if(dest_format==GL_RGBA)
+                        dest_type = GL_UNSIGNED_SHORT_5_5_5_1;
+                    convert = 1;
+                }
                 break;
             case GL_UNSIGNED_SHORT_5_5_5_1:
                 if(dest_format==GL_RGBA)
@@ -427,12 +438,19 @@ static void *swizzle_texture(GLsizei width, GLsizei height,
                 break;
             #ifdef __BIG_ENDIAN__
             case GL_UNSIGNED_INT_8_8_8_8_REV:
+                if(!hardext.rgba8888rev) {
+                    dest_type = GL_UNSIGNED_BYTE;
+                    convert = 1;
+                }
+                break;
             #else
             case GL_UNSIGNED_INT_8_8_8_8:
-            #endif
-                dest_type = GL_UNSIGNED_BYTE;
-                convert = 1;
+                if(!hardext.rgba8888) {
+                    dest_type = GL_UNSIGNED_BYTE;
+                    convert = 1;
+                }
                 break;
+            #endif
             case GL_UNSIGNED_INT_24_8:
                 if(hardext.depthtex && hardext.depthstencil) {
                     dest_type = GL_UNSIGNED_INT_24_8;
@@ -932,7 +950,7 @@ void gl4es_glTexImage2D(GLenum target, GLint level, GLint internalformat,
 
     gltexture_t *bound = glstate->texture.bound[glstate->texture.active][itarget];
 
-    //Special case when resizing an attached to FBO texture, taht is attached to depth and/or stencil => resizing is specific then
+    //Special case when resizing an attached to FBO texture, that is attached to depth and/or stencil => resizing is specific then
     if(bound->binded_fbo && (bound->binded_attachment==GL_DEPTH_ATTACHMENT || bound->binded_attachment==GL_STENCIL_ATTACHMENT || bound->binded_attachment==GL_DEPTH_STENCIL_ATTACHMENT))
     {
         // non null data should be handled, but need to convert then...
@@ -1375,8 +1393,7 @@ void gl4es_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                 && (bound->mipmap_need || globals4es.automipmap==3)) {
                     // remove the need for mipmap...
                     bound->mipmap_need = 0;
-                    /*gles_glTexParameteri(rtarget, GL_TEXTURE_MIN_FILTER, bound->min_filter);
-                    gles_glTexParameteri(rtarget, GL_TEXTURE_MAG_FILTER, bound->mag_filter);*/ // why forcing ?
+                    gl4es_glTexParameteri(rtarget, GL_TEXTURE_MIN_FILTER, bound->sampler.min_filter); // forcing min_filter to be recomputed
                 }
             }
             

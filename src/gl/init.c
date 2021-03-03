@@ -52,10 +52,12 @@ void glx_init();
 
 static int inited = 0;
 
+__attribute__((visibility("default")))
 void set_getmainfbsize(void (*new_getMainFBSize)(int* w, int* h)) {
     gl4es_getMainFBSize = (void*)new_getMainFBSize;
 }
 
+__attribute__((visibility("default")))
 void set_getprocaddress(void *(*new_proc_address)(const char *)) {
     gles_getProcAddress = new_proc_address;
 }
@@ -123,7 +125,7 @@ void initialize_gl4es() {
     	default:
     	  break;
     }
-
+    env(LIBGL_BLITFB0, globals4es.blitfb0, "Blit to FB 0 force a SwapBuffer");
     env(LIBGL_FPS, globals4es.showfps, "fps counter enabled");
 #ifdef USE_FBIO
     env(LIBGL_VSYNC, globals4es.vsync, "vsync enabled");
